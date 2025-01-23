@@ -171,28 +171,6 @@
         owner: root
         mode: 0555
 
-    - name: Create '/etc/caddy/caddy.env' file
-      copy:
-        dest: /etc/caddy/caddy.env
-        content: |
-          # https://github.com/lucaslorentz/caddy-docker-proxy?tab=readme-ov-file#caddy-cli
-          CADDY_DOCKER_CADDYFILE_PATH=/etc/caddy/Caddyfile
-          CADDY_INGRESS_NETWORKS=caddy
-          #CADDY_CONTROLLER_NETWORK=
-          #CADDY_DOCKER_SOCKETS=
-          #CADDY_DOCKER_CERTS_PATH=
-          #CADDY_DOCKER_APIS_VERSION=
-          #CADDY_DOCKER_LABEL_PREFIX=
-          #CADDY_DOCKER_MODE=
-          #CADDY_DOCKER_POLLING_INTERVAL=
-          #CADDY_DOCKER_PROCESS_CADDYFILE=
-          #CADDY_DOCKER_PROXY_SERVICE_TASKS=
-          #CADDY_DOCKER_SCAN_STOPPED_CONTAINERS=
-          #CADDY_DOCKER_NO_SCOPE=
-        group: sys
-        owner: root
-        mode: 0700
-
     - name: Create '/etc/systemd/system/caddy.service' file
       copy:
         dest: /etc/systemd/system/caddy.service
@@ -207,7 +185,7 @@
           Type=notify
           User=caddy
           Group=caddy
-          ExecStart=/usr/bin/caddy docker-proxy --envfile /etc/caddy/caddy.env
+          ExecStart=/usr/bin/caddy docker-proxy --ingress-networks caddy --config /etc/caddy/Caddyfile
           ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile
           TimeoutStopSec=5s
           LimitNOFILE=1048576
@@ -300,7 +278,7 @@
           echo "Caddy version $(caddy version)"
           echo "$(docker --version)"
           echo ""
-          echo "Caddy configs  ${YELLOW}/etc/caddy/Caddyfile${NORMAL}"
+          echo "Caddy config   ${YELLOW}/etc/caddy/Caddyfile${NORMAL}"
           echo "Caddy service  ${YELLOW}/etc/systemd/system/caddy.service${NORMAL}"
           echo "Containers     ${YELLOW}/var/www/containers${NORMAL}"
           echo "Static files   ${YELLOW}/var/www/static${NORMAL}"
