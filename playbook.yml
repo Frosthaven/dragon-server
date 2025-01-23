@@ -290,6 +290,7 @@
           RED=$'\e[31m'
           MAGENTA=$'\e[35m'
           GREEN=$'\e[32m'
+          echo ""
           echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
           echo "🐲 dragon-server: ${CYAN}https://github.com/frosthaven/dragon-server"
           echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
@@ -298,11 +299,13 @@
           echo ""
           echo "Caddy version $(caddy version)"
           echo "$(docker --version)"
-          echo "Caddy configs: ${YELLOYW}/etc/caddy/Caddyfile${NORMAL}, Caddy service: ${YELLOW}/etc/systemd/system/caddy.service${NORMAL}"
-          echo "Containers: ${YELLOW}/var/www/containers${NORMAL}"
-          echo "Static files: ${YELLOW}/var/www/static${NORMAL}"
-          echo "${BLUE}"
-          echo "$(sudo docker ps)"
-          echo "${NORMAL}"
+          echo ""
+          echo "Caddy configs  ${YELLOW}/etc/caddy/Caddyfile${NORMAL}"
+          echo "Caddy service  ${YELLOW}/etc/systemd/system/caddy.service${NORMAL}"
+          echo "Containers     ${YELLOW}/var/www/containers${NORMAL}"
+          echo "Static files   ${YELLOW}/var/www/static${NORMAL}"
+          echo ""
+          echo "${BLUE}$(sudo docker ps)${NORMAL}"
+          echo ""
         state: present
         create: true
