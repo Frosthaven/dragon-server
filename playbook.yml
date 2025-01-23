@@ -256,4 +256,3 @@
           echo "${NORMAL}"
         state: present
         create: true
-      with_items: "{{ home_folders.stdout_lines }} + [ '{{ root_home.stdout }}' ]"
