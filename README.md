@@ -1,12 +1,13 @@
 # 🐲 dragon-server
 
-`dragon-server` is an Ubuntu based server image that hosts Docker containers as
-web services.
+`dragon-server` is a development server image that hosts Docker containers as
+web services, supporting container auto-discovery and automatic SSL certificates.
 
 - The image is built using [Packer](https://www.packer.io/) and [Ansible](https://docs.ansible.com/).
 
 - Docker containers are served using [Caddy](https://caddyserver.com/) via the
 [docker-caddy-proxy](https://github.com/lucaslorentz/caddy-docker-proxy) plugin.
+
 - This project is current a work in progress.
 
 ---
@@ -80,7 +81,7 @@ Follow the installation guide for the following tools:
 *Requires `DIGITALOCEAN_TOKEN` environmental variable to be set.*
 
 ```shell
-packer init ./digitalocean/build.pkr.hcl;
+packer init ./digitalocean;
 packer build ./digitalocean;
 ```
 

@@ -24,11 +24,8 @@
         reboot_timeout: 30
         msg: "Reboot initiated by Ansible"
       become: true
-      async: 1
-      poll: 0
 
-
-    # configure ufw firewall *****************************************************
+    # configure ufw firewall ***************************************************
 
     - name: Allow SSH access on port 22
       ufw:
@@ -55,7 +52,7 @@
       ufw:
         state: reloaded
 
-    # install system packages ****************************************************
+    # install system packages **************************************************
 
     - name: Update apt
       apt:
@@ -93,6 +90,9 @@
         name: docker-ce
         state: latest
         update_cache: true
+
+    - name: Set Docker context to default
+      shell: docker context use default
 
     - name: Register Docker version
       shell: docker --version
@@ -161,17 +161,65 @@
 
     - name: Create '/etc/caddy/Caddyfile' file
       copy:
-        content: ""
         dest: /etc/caddy/Caddyfile
-        force: false
+        content: |
+          MY_DOMAIN {
+              root * /var/www/static
+              file_server
+          }
         group: sys
         owner: root
         mode: 0555
 
-    - name: Download '/etc/systemd/system/caddy.service' file
-      get_url:
-          url: https://raw.githubusercontent.com/caddyserver/dist/refs/heads/master/init/caddy.service
-          dest: /etc/systemd/system/caddy.service
+    - name: Create '/etc/caddy/caddy.env' file
+      copy:
+        dest: /etc/caddy/caddy.env
+        content: |
+          # https://github.com/lucaslorentz/caddy-docker-proxy?tab=readme-ov-file#caddy-cli
+          CADDY_DOCKER_CADDYFILE_PATH=/etc/caddy/Caddyfile
+          CADDY_INGRESS_NETWORKS=caddy
+          #CADDY_CONTROLLER_NETWORK=
+          #CADDY_DOCKER_SOCKETS=
+          #CADDY_DOCKER_CERTS_PATH=
+          #CADDY_DOCKER_APIS_VERSION=
+          #CADDY_DOCKER_LABEL_PREFIX=
+          #CADDY_DOCKER_MODE=
+          #CADDY_DOCKER_POLLING_INTERVAL=
+          #CADDY_DOCKER_PROCESS_CADDYFILE=
+          #CADDY_DOCKER_PROXY_SERVICE_TASKS=
+          #CADDY_DOCKER_SCAN_STOPPED_CONTAINERS=
+          #CADDY_DOCKER_NO_SCOPE=
+        group: sys
+        owner: root
+        mode: 0700
+
+    - name: Create '/etc/systemd/system/caddy.service' file
+      copy:
+        dest: /etc/systemd/system/caddy.service
+        content: |
+          [Unit]
+          Description=Caddy
+          Documentation=https://caddyserver.com/docs/
+          After=network.target network-online.target
+          Requires=network-online.target
+          
+          [Service]
+          Type=notify
+          User=caddy
+          Group=caddy
+          ExecStart=/usr/bin/caddy docker-proxy --envfile /etc/caddy/caddy.env
+          ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile
+          TimeoutStopSec=5s
+          LimitNOFILE=1048576
+          PrivateTmp=true
+          ProtectSystem=full
+          AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+          
+          [Install]
+          WantedBy=multi-user.target
+        group: sys
+        owner: root
+        mode: 0700
 
     - name: Reload systemd
       systemd:
@@ -181,6 +229,12 @@
       systemd:
           name: caddy
           enabled: yes
+
+    - name: Add caddy to docker group
+      user:
+          name: caddy
+          groups: docker
+          append: yes
 
     # initial project workspace ************************************************
 
@@ -215,20 +269,13 @@
       shell:
         cmd: "sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && service ssh restart"
 
-    # configure ssh **************************************************************
+    # configure ssh ************************************************************
 
     - name: Allow public key authentication
       shell:
         cmd: "sed -i -E 's/#?PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config && service ssh restart"
 
-    # configure login messaging **************************************************
-
-    - name: Register home folders
-      shell: find /home -maxdepth 1 -mindepth 1 -type d
-      register: home_folders
-
-    - name: Set Docker context to default
-      shell: docker context use default
+    # configure login messaging ************************************************
 
     - name: Update ~/.bashrc with version info
       blockinfile:
@@ -244,13 +291,16 @@
           MAGENTA=$'\e[35m'
           GREEN=$'\e[32m'
           echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
-          echo "🐲  dragon-server: ${CYAN}https://github.com/frosthaven/dragon-server"
+          echo "🐲 dragon-server: ${CYAN}https://github.com/frosthaven/dragon-server"
           echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
           echo ""
           echo "$(lsb_release -a)"
           echo ""
           echo "Caddy version $(caddy version)"
           echo "$(docker --version)"
+          echo "Caddy configs: ${YELLOYW}/etc/caddy/Caddyfile${NORMAL}, Caddy service: ${YELLOW}/etc/systemd/system/caddy.service${NORMAL}"
+          echo "Containers: ${YELLOW}/var/www/containers${NORMAL}"
+          echo "Static files: ${YELLOW}/var/www/static${NORMAL}"
           echo "${BLUE}"
           echo "$(sudo docker ps)"
           echo "${NORMAL}"
