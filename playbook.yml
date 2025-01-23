@@ -227,13 +227,12 @@
       shell: find /home -maxdepth 1 -mindepth 1 -type d
       register: home_folders
 
-    - name: Register root home folder
-      shell: echo ~
-      register: root_home
+    - name: Set Docker context to default
+      shell: docker context use default
 
-    - name: Update all user bashrc with version info
+    - name: Update ~/.bashrc with version info
       blockinfile:
-        path: "{{ item }}/.bashrc"
+        path: "~/.bashrc"
         block: |
           cd /var/www/containers
           clear
