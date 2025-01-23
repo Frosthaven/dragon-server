@@ -163,7 +163,7 @@
       copy:
         dest: /etc/caddy/Caddyfile
         content: |
-          MY_DOMAIN {
+          example.com {
               root * /var/www/static
               file_server
           }
@@ -225,6 +225,31 @@
       file:
         path: /var/www/containers
         state: directory
+
+    - name: Create '/var/www/containers/whoami' directory
+      file:
+        path: /var/www/containers/whoami
+        state: directory
+
+    - name: Create '/var/www/containers/whoami/docker-compose.yml' file
+      copy:
+        dest: /var/www/containers/whoami/docker-compose.yml
+        content: |
+          services:
+            whoami:
+              image: traefik/whoami
+              networks:
+                - caddy
+              labels:
+                caddy: whoami.example.com
+                caddy.reverse_proxy: "{{upstreams 80}}"
+          
+          networks:
+            caddy:
+              external: true
+        group: sys
+        owner: root
+        mode: 0700
 
     # update & upgrade *********************************************************
 
