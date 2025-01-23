@@ -1,0 +1,299 @@
+- hosts: all
+  become: true
+  tasks:
+
+    # disable unattended upgrades **********************************************
+    # note: this disable and reboot strategy is the only way to reliably avoid
+    #       apt locks during playbook execution
+
+    - name: Unattended upgrades check
+      shell:
+        cmd: "dpkg -l | grep unattended-upgrades | wc -l"
+      register: unattended_upgrades_check
+
+    - name: Disable Unattended upgrades
+      when: unattended_upgrades_check.stdout | int > 0
+      systemd:
+        name: unattended-upgrades
+        enabled: no
+
+    - name: Reboot
+      when: unattended_upgrades_check.stdout | int > 0
+      ansible.builtin.reboot:
+        post_reboot_delay: 60 # needed to avoid early script termination
+        reboot_timeout: 30
+        msg: "Reboot initiated by Ansible"
+      become: true
+      async: 1
+      poll: 0
+
+
+    # configure ufw firewall *****************************************************
+
+    - name: Allow SSH access on port 22
+      ufw:
+        rule: allow
+        to_port: 22
+        protocol: tcp
+        comment: "Allow SSH connections"
+
+    - name: Allow HTTP traffic on port 80
+      ufw:
+        rule: allow
+        to_port: 80
+        protocol: tcp
+        comment: "Allow HTTP traffic"
+
+    - name: Allow HTTPS traffic on port 443
+      ufw:
+        rule: allow
+        to_port: 443
+        protocol: tcp
+        comment: "Allow HTTPS traffic"
+
+    - name: Reload UFW firewall
+      ufw:
+        state: reloaded
+
+    # install system packages ****************************************************
+
+    - name: Update apt
+      apt:
+          update_cache: yes
+
+    - name: Install required system packages
+      apt:
+        pkg:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - virtualenv
+          - python3-pip
+          - python3-setuptools
+          - pipx
+          - golang-go
+        state: latest
+        update_cache: true
+
+    # install docker-ce ********************************************************
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Update apt and install docker-ce
+      apt:
+        name: docker-ce
+        state: latest
+        update_cache: true
+
+    - name: Register Docker version
+      shell: docker --version
+      register: docker_version
+
+    - debug:
+        var: docker_version.stdout
+
+    # install python w/docker **************************************************
+
+    - name: Register Python 3.X version
+      command: python3 --version
+      register: pyver
+      changed_when: false
+      failed_when: pyver.rc != 0
+
+    - name: Remove Python 3.X EXTERNALLY-MANAGED file
+      file:
+        state: absent
+        path: "/usr/lib/python{{ pyver.stdout.split()[1] | regex_search('([0-9]+\\.[0-9]+)') }}/EXTERNALLY-MANAGED"
+      when: pyver.stdout | regex_search('3\.[0-9]+')
+      # @see: https://github.com/geerlingguy/ansible-role-pip/issues/57
+
+    - name: Install Docker Module for Python
+      pip:
+        name: docker
+
+    # install xcaddy ***********************************************************
+
+    - name: Add xcaddy GPG apt Key
+      shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg
+
+    - name: Add xcaddy repository
+      shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-xcaddy.list
+
+    - name: Update apt and install xcaddy
+      apt:
+        name: xcaddy
+        state: latest
+        update_cache: true
+
+    # build & install caddy w/plugins ******************************************
+
+    - name: Build caddy with plugins
+      shell: |
+        xcaddy build \
+        --with github.com/caddy-dns/cloudflare \
+        --with github.com/caddy-dns/digitalocean \
+        --with github.com/caddyserver/transform-encoder \
+        --with github.com/lucaslorentz/caddy-docker-proxy/plugin/v2
+
+    - name: Install caddy
+      shell: mv caddy /usr/bin/caddy
+
+    - name: Register caddy version
+      shell: caddy version
+      register: caddy_version
+
+    - debug:
+        var: caddy_version.stdout
+
+    - name: Create '/etc/caddy' directory
+      file:
+        path: /etc/caddy
+        state: directory
+
+    - name: Create '/etc/caddy/Caddyfile' file
+      copy:
+        content: ""
+        dest: /etc/caddy/Caddyfile
+        force: false
+        group: sys
+        owner: root
+        mode: 0555
+
+    - name: Download '/etc/systemd/system/caddy.service' file
+      get_url:
+          url: https://raw.githubusercontent.com/caddyserver/dist/refs/heads/master/init/caddy.service
+          dest: /etc/systemd/system/caddy.service
+
+    - name: Reload systemd
+      systemd:
+          daemon_reload: yes
+
+    - name: Enable caddy service
+      systemd:
+          name: caddy
+          enabled: yes
+
+    - name: Create '/var/www/caddy' directory
+      file:
+        path: /var/www/caddy
+        state: directory
+
+    - name: symlink the caddyfile
+      file:
+          src: /etc/caddy
+          dest: /var/www/caddy
+          state: link
+
+    # initial project workspace ************************************************
+
+    - name: Create Docker network 'caddy'
+      docker_network:
+        name: caddy
+        state: present
+
+    - name: Create '/var/www/containers' directory
+      file:
+        path: /var/www/containers
+        state: directory
+
+    - name: Create '/var/www/containers/whoami' directory
+      file:
+        path: /var/www/containers/whoami
+        state: directory
+
+    - name: Create '/var/www/containers/whoami/docker-compose.yml' file
+      copy:
+        content: |
+          version: '3.3'
+
+          services:
+            whoami:
+              image: "containous/whoami"
+              container_name: "whoami"
+              ports:
+                - "8080:80"
+              networks:
+                - caddy
+              labels:
+                - caddy: whoami.DRAGON_DOMAIN
+                - caddy.reverse_proxy: "{{upstreams 80}}"
+              restart: unless-stopped
+
+          networks:
+            caddy:
+              external: true
+        dest: /var/www/containers/whoami/docker-compose.yml
+
+    # update & upgrade *********************************************************
+
+    - name: Update and upgrade apt packages
+      become: true
+      apt:
+        upgrade: yes
+        update_cache: yes
+        cache_valid_time: 86400 #One day
+
+    - name: Re-enable Unattended upgrades if applicable
+      when: unattended_upgrades_check.stdout | int > 0
+      systemd:
+        name: unattended-upgrades
+        enabled: yes
+
+    # configure user ***********************************************************
+
+    - name: Disable password logins
+      shell:
+        cmd: "sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && service ssh restart"
+
+    # configure ssh **************************************************************
+
+    - name: Allow public key authentication
+      shell:
+        cmd: "sed -i -E 's/#?PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config && service ssh restart"
+
+    # configure login messaging **************************************************
+
+    - name: Register home folders
+      shell: find /home -maxdepth 1 -mindepth 1 -type d
+      register: home_folders
+
+    - name: Register root home folder
+      shell: echo ~
+      register: root_home
+
+    - name: Update all user bashrc with version info
+      blockinfile:
+        path: "{{ item }}/.bashrc"
+        block: |
+          cd /var/www/containers
+          clear
+          NORMAL=$'\e[0m'
+          YELLOW=$'\e[33m'
+          CYAN=$'\e[36m'
+          BLUE=$'\e[34m'
+          RED=$'\e[31m'
+          MAGENTA=$'\e[35m'
+          GREEN=$'\e[32m'
+          echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
+          echo "🐲  dragon-server: ${CYAN}https://github.com/frosthaven/dragon-server"
+          echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
+          echo ""
+          echo "$(lsb_release -a)"
+          echo ""
+          echo "Caddy version $(caddy version)"
+          echo "$(docker --version)"
+          echo "${BLUE}"
+          echo "$(sudo docker ps)"
+          echo "${NORMAL}"
+        state: present
+        create: true
+      with_items: "{{ home_folders.stdout_lines }} + [ '{{ root_home.stdout }}' ]"
