@@ -1,19 +1,21 @@
 # 🐲 dragon-server
 
 `dragon-server` is an Ubuntu based server image that hosts Docker containers as
-web services. The image is built using [Packer](https://www.packer.io/) and [Ansible](https://docs.ansible.com/).
+web services.
 
-Docker containers are served using [Caddy](https://caddyserver.com/) via the
-[docker-caddy-proxy](https://github.com/lucaslorentz/caddy-docker-proxy) plugin
-to provide automatic SSL certificates and reverse proxying.
+- The image is built using [Packer](https://www.packer.io/) and [Ansible](https://docs.ansible.com/).
+
+- Docker containers are served using [Caddy](https://caddyserver.com/) via the
+[docker-caddy-proxy](https://github.com/lucaslorentz/caddy-docker-proxy) plugin.
+- This project is current a work in progress.
 
 ---
 
 ## Usage
 
 ### SSH Login
-- You will need to provide an SSH key when using this image to spin up server
-  instances, as password login is disabled.
+You will need to provide an SSH key when spinning up server
+  instances based on this image, as password login is disabled by default.
 
 ### Caddy Server
 
@@ -24,15 +26,16 @@ Caddy is built with the following plugins:
 - [caddyserver/transform-encoder](https://github.com/caddyserver/transform-encoder)
 - [lucaslorentz/caddy-docker-proxy](https://github.com/lucaslorentz/caddy-docker-proxy/plugin/v2)
 
-Caddy configuration files are located in `/var/www/caddy/Caddyfile`.
+Caddy configuration is located in `/etc/caddy`.
 
 Caddy is installed as a systemd service:
 
-- To start the service, run `sudo systemctl start caddy`.
-- To enable the service on boot, run `sudo systemctl enable caddy`.
-- To check the status of the service, run `sudo systemctl status caddy`.
-- To restart the service, run `sudo systemctl restart caddy`.
-- To stop the service, run `sudo systemctl stop caddy`.
+- Start: `sudo systemctl start caddy`.
+- Enable (already enabled by default): `sudo systemctl enable caddy`.
+- Disable: `sudo systemctl disable caddy`.
+- Status: `sudo systemctl status caddy`.
+- Restart: `sudo systemctl restart caddy`.
+- Stop: `sudo systemctl stop caddy`.
 
 ### Docker Container Configuration
 
@@ -66,23 +69,19 @@ networks:
 recommended to install your tools AND any system level environmental variables
 in WSL.*
 
-Install the following tools:
+Follow the installation guide for the following tools:
 
-- [Packer](https://www.packer.io/)
+- [Packer](https://developer.hashicorp.com/packer/tutorials/docker-get-started/get-started-install-cli)
 - [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html)
-- [OpenTofu](https://opentofu.org/docs/intro/install/)
 
 ### Build
-Below are the instructions for building the image for each provider. The image
-is built using the `build.pkr.hcl` file in each provider's directory, which gets
-the necessary variables from the `variables.pkr.hcl` file in the same directory.
 
 #### Digital Ocean Snapshot
 *Requires `DIGITALOCEAN_TOKEN` environmental variable to be set.*
 
 ```shell
-packer init ./digitalocean/build.pkr.hcl
-packer build ./digitalocean
+packer init ./digitalocean/build.pkr.hcl;
+packer build ./digitalocean;
 ```
 
 #### Amazon Web Services AMI

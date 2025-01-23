@@ -182,17 +182,6 @@
           name: caddy
           enabled: yes
 
-    - name: Create '/var/www/caddy' directory
-      file:
-        path: /var/www/caddy
-        state: directory
-
-    - name: symlink the caddyfile
-      file:
-          src: /etc/caddy
-          dest: /var/www/caddy
-          state: link
-
     # initial project workspace ************************************************
 
     - name: Create Docker network 'caddy'
@@ -204,34 +193,6 @@
       file:
         path: /var/www/containers
         state: directory
-
-    - name: Create '/var/www/containers/whoami' directory
-      file:
-        path: /var/www/containers/whoami
-        state: directory
-
-    - name: Create '/var/www/containers/whoami/docker-compose.yml' file
-      copy:
-        content: |
-          version: '3.3'
-
-          services:
-            whoami:
-              image: "containous/whoami"
-              container_name: "whoami"
-              ports:
-                - "8080:80"
-              networks:
-                - caddy
-              labels:
-                - caddy: whoami.DRAGON_DOMAIN
-                - caddy.reverse_proxy: "{{upstreams 80}}"
-              restart: unless-stopped
-
-          networks:
-            caddy:
-              external: true
-        dest: /var/www/containers/whoami/docker-compose.yml
 
     # update & upgrade *********************************************************
 
