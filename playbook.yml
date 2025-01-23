@@ -247,6 +247,7 @@
           networks:
             caddy:
               external: true
+
         group: sys
         owner: root
         mode: 0700
