@@ -23,6 +23,7 @@ You will need to provide an SSH key when spinning up server
 Caddy is built with the following plugins:
 
 - [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare)
+- [caddy-dns/route53](https://github.com/caddy-dns/route53)
 - [caddy-dns/digitalocean](https://github.com/caddy-dns/digitalocean)
 - [caddyserver/transform-encoder](https://github.com/caddyserver/transform-encoder)
 - [lucaslorentz/caddy-docker-proxy](https://github.com/lucaslorentz/caddy-docker-proxy/plugin/v2)
