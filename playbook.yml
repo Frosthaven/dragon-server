@@ -180,7 +180,7 @@
           Documentation=https://caddyserver.com/docs/
           After=network.target network-online.target
           Requires=network-online.target
-          
+
           [Service]
           Type=notify
           User=caddy
@@ -192,7 +192,7 @@
           PrivateTmp=true
           ProtectSystem=full
           AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-          
+
           [Install]
           WantedBy=multi-user.target
         group: sys
@@ -242,12 +242,11 @@
                 - caddy
               labels:
                 caddy: whoami.example.com
-                caddy.reverse_proxy: "{{upstreams 80}}"
-          
+                caddy.reverse_proxy: "{{ '{{upstreams 80}}' }}"
+
           networks:
             caddy:
               external: true
-
         group: sys
         owner: root
         mode: 0700
