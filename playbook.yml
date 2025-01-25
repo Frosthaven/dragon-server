@@ -1,66 +1,83 @@
-- hosts: all
+# note: this reboot strategy is the only way to reliably avoid apt locks during
+#       playbook execution
+- name: "Disable Unattended Upgrades (if applicable)"
+  hosts: all
   become: true
   tasks:
+    - block:
+      - name: "Check for Unattended Upgrades"
+        shell:
+          cmd: "dpkg -l | grep unattended-upgrades | wc -l"
+        register: unattended_upgrades_check
+      - name: "Disable Unattended Upgrades"
+        when: unattended_upgrades_check.stdout | int > 0
+        systemd:
+          name: unattended-upgrades
+          enabled: no
+      - name: "Reboot"
+        when: unattended_upgrades_check.stdout | int > 0
+        ansible.builtin.reboot:
+          post_reboot_delay: 60 # needed to avoid early script termination
+          reboot_timeout: 30
+          msg: "Reboot initiated by Ansible"
+        become: true
 
-    # disable unattended upgrades **********************************************
-    # note: this disable and reboot strategy is the only way to reliably avoid
-    #       apt locks during playbook execution
+- name: "Generate Server Directories"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Create Directories"
+        file:
+          path: "{{ item }}"
+          state: directory
+          owner: "{{ ansible_user }}"
+          group: "{{ ansible_user }}"
+          mode: 0755
+        loop:
+          - "/var/www"
+          - "/var/www/static"
+          - "/var/www/containers"
+          - "/var/www/containers/whoami"
 
-    - name: Unattended upgrades check
-      shell:
-        cmd: "dpkg -l | grep unattended-upgrades | wc -l"
-      register: unattended_upgrades_check
+- name: "Configure UFW Firewall"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Allow SSH access on port 22"
+        ufw:
+          rule: allow
+          to_port: 22
+          protocol: tcp
+          comment: "Allow SSH connections"
+      - name: "Allow HTTP traffic on port 80"
+        ufw:
+          rule: allow
+          to_port: 80
+          protocol: tcp
+          comment: "Allow HTTP traffic"
+      - name: "Allow HTTPS traffic on port 443"
+        ufw:
+          rule: allow
+          to_port: 443
+          protocol: tcp
+          comment: "Allow HTTPS traffic"
+      - name: Reload UFW firewall
+        ufw:
+          state: reloaded
 
-    - name: Disable Unattended upgrades
-      when: unattended_upgrades_check.stdout | int > 0
-      systemd:
-        name: unattended-upgrades
-        enabled: no
-
-    - name: Reboot
-      when: unattended_upgrades_check.stdout | int > 0
-      ansible.builtin.reboot:
-        post_reboot_delay: 60 # needed to avoid early script termination
-        reboot_timeout: 30
-        msg: "Reboot initiated by Ansible"
-      become: true
-
-    # configure ufw firewall ***************************************************
-
-    - name: Allow SSH access on port 22
-      ufw:
-        rule: allow
-        to_port: 22
-        protocol: tcp
-        comment: "Allow SSH connections"
-
-    - name: Allow HTTP traffic on port 80
-      ufw:
-        rule: allow
-        to_port: 80
-        protocol: tcp
-        comment: "Allow HTTP traffic"
-
-    - name: Allow HTTPS traffic on port 443
-      ufw:
-        rule: allow
-        to_port: 443
-        protocol: tcp
-        comment: "Allow HTTPS traffic"
-
-    - name: Reload UFW firewall
-      ufw:
-        state: reloaded
-
-    # install system packages **************************************************
-
-    - name: Update apt
-      apt:
+- name: "Install System Packages"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Update apt"
+        apt:
           update_cache: yes
-
-    - name: Install required system packages
-      apt:
-        pkg:
+      - name: "Install packages"
+        apt:
+          pkg:
           - apt-transport-https
           - ca-certificates
           - curl
@@ -70,246 +87,275 @@
           - python3-setuptools
           - pipx
           - golang-go
-        state: latest
-        update_cache: true
+          state: latest
+          update_cache: true
 
-    # install docker-ce ********************************************************
+- name: "Install Docker"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Add Docker GPG apt Key"
+        apt_key:
+          url: https://download.docker.com/linux/ubuntu/gpg
+          state: present
+      - name: "Add Docker Repository"
+        apt_repository:
+          repo: deb https://download.docker.com/linux/ubuntu focal stable
+          state: present
+      - name: "Install docker-ce"
+        apt:
+          name: docker-ce
+          state: latest
+          update_cache: true
+      - name: "Set Docker Context to default"
+        shell: docker context use default
 
-    - name: Add Docker GPG apt Key
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
+- name: "Install Python"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Register Python 3.X version"
+        command: python3 --version
+        register: pyver
+        changed_when: false
+        failed_when: pyver.rc != 0
+      - name: "Remove Python 3.X EXTERNALLY-MANAGED file"
+        file:
+          state: absent
+          path: "/usr/lib/python{{ pyver.stdout.split()[1] | regex_search('([0-9]+\\.[0-9]+)') }}/EXTERNALLY-MANAGED"
+        when: pyver.stdout | regex_search('3\.[0-9]+')
+        # @see: https://github.com/geerlingguy/ansible-role-pip/issues/57
+      - name: "Install Docker Module for Python"
+        pip:
+          name: docker
 
-    - name: Add Docker Repository
-      apt_repository:
-        repo: deb https://download.docker.com/linux/ubuntu focal stable
-        state: present
+- name: "Install Caddy"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Create 'caddy' group"
+        group:
+          name: caddy
+          system: yes
+      - name: "Create 'caddy' user"
+        user:
+          name: caddy
+          groups: caddy
+          shell: /bin/false
+          system: yes
+          createhome: no
+      - name: "Add xCaddy GPG apt Key"
+        shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg
+      - name: "Add xCaddy Repository"
+        shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-xcaddy.list
+      - name: "Install xCaddy"
+        apt:
+          name: xcaddy
+          state: latest
+          update_cache: true
+      - name: "Build Caddy+Plugins"
+        shell: |
+          xcaddy build \
+          --with github.com/caddy-dns/cloudflare \
+          --with github.com/caddy-dns/route53 \
+          --with github.com/caddy-dns/digitalocean \
+          --with github.com/caddyserver/transform-encoder \
+          --with github.com/lucaslorentz/caddy-docker-proxy/plugin/v2
+      - name: "Install caddy"
+        shell: mv caddy /usr/bin/caddy
+      - name: "Create Caddy Directories"
+        file:
+          path: "{{ item }}"
+          state: directory
+          owner: caddy
+          group: caddy
+          mode: 0775
+        loop:
+          - "/var/log/caddy"
+          - "/var/www/_caddy"
+          - "/var/www/_caddy/storage"
+          - "/var/www/_caddy/storage/locks"
+      - name: "Set Caddy Folder Permissions"
+        shell: chown -R caddy:caddy /var/www/_caddy
+      - name: "Generate '/var/www/_caddy/Caddyfile'"
+        copy:
+          dest: /var/www/_caddy/Caddyfile
+          content: |
+            {
+                # https://caddyserver.com/docs/caddyfile/options
 
-    - name: Update apt and install docker-ce
-      apt:
-        name: docker-ce
-        state: latest
-        update_cache: true
+                default_sni example.com
+                email example@example.com
+                storage file_system /var/www/_caddy/storage
 
-    - name: Set Docker context to default
-      shell: docker context use default
+                log default {
+                    output file /var/log/caddy/access.log {
+                        mode               644
+                        roll_size          100MiB
+                        roll_keep          10
+                        roll_keep_for      2160h # 90 days
+                    }
 
-    - name: Register Docker version
-      shell: docker --version
-      register: docker_version
+                    format json
+                    level ERROR
+                }
 
-    - debug:
-        var: docker_version.stdout
+                # disables getting certificates externally:
+                # local_certs
 
-    # install python w/docker **************************************************
+                # DNS/CLOUDFLARE: https://github.com/caddy-dns/cloudflare
+                #acme_dns cloudflare {
+                #  zone_token env.CLOUDFLARE_ZONE_TOKEN
+                #  api_token env.CLOUDFLARE_API_TOKEN
+                #}
 
-    - name: Register Python 3.X version
-      command: python3 --version
-      register: pyver
-      changed_when: false
-      failed_when: pyver.rc != 0
+                # DNS/DIGITALOCEAN: https://github.com/caddy-dns/digitalocean
+                # acme_dns digitalocean {env.DIGITALOCEAN_TOKEN}
 
-    - name: Remove Python 3.X EXTERNALLY-MANAGED file
-      file:
-        state: absent
-        path: "/usr/lib/python{{ pyver.stdout.split()[1] | regex_search('([0-9]+\\.[0-9]+)') }}/EXTERNALLY-MANAGED"
-      when: pyver.stdout | regex_search('3\.[0-9]+')
-      # @see: https://github.com/geerlingguy/ansible-role-pip/issues/57
+                # DNS/ROUTE53: https://github.com/caddy-dns/route53
+                #acme_dns route53 {
+                #  max_retries 10 // optional
+                #  profile "real-profile" // defaults to $AWS_PROFILE
+                #  access_key_id "AKI..." // required if $AWS_ACCESS_KEY_ID is not defined
+                #  secret_access_key "wJa..." // required if $AWS_SECRET_ACCESS_KEY is not defined
+                #  session_token "TOKEN..." // defaults to $AWS_SESSION_TOKEN (optional)
+                #  region "us-east-1" // required if $AWS_REGION is not defined
+                #  max_wait_dur 60, // propagation wait duration in seconds (optional)
+                #  wait_for_propagation false // wait for records to propagate (optional)
+                #  hosted_zone_id ZABCD1EFGHIL // AWS hosted zone ID to update (optional)
+                #}
 
-    - name: Install Docker Module for Python
-      pip:
-        name: docker
+                servers :443 {
+                  name https
+                }
 
-    # install xcaddy ***********************************************************
+                servers :80 {
+                  name http
+                }
+            }
 
-    - name: Add xcaddy GPG apt Key
-      shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-xcaddy-archive-keyring.gpg
+            static.example.com {
+                root * /var/www/static
+                file_server
+            }
 
-    - name: Add xcaddy repository
-      shell: curl -1sLf 'https://dl.cloudsmith.io/public/caddy/xcaddy/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-xcaddy.list
+          owner: caddy
+          group: caddy
+          mode: 0775
+      - name: "Generate '/etc/systemd/system/caddy.service'"
+        copy:
+          dest: /etc/systemd/system/caddy.service
+          content: |
+            # run `systemctl daemon-reload` after editing this file
 
-    - name: Update apt and install xcaddy
-      apt:
-        name: xcaddy
-        state: latest
-        update_cache: true
+            [Unit]
+            Description=Caddy
+            Documentation=https://caddyserver.com/docs/
+            After=network.target network-online.target
+            Requires=network-online.target
 
-    # build & install caddy w/plugins ******************************************
+            [Service]
+            Type=notify
+            User=caddy
+            Group=caddy
+            ExecStart=/usr/bin/caddy docker-proxy --ingress-networks caddy --caddyfile-path /var/www/_caddy/Caddyfile
+            ExecReload=/usr/bin/caddy reload --config /var/www/_caddy/Caddyfile --force
+            TimeoutStopSec=5s
+            LimitNOFILE=1048576
+            PrivateTmp=true
+            ProtectSystem=full
+            AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 
-    - name: Build caddy with plugins
-      shell: |
-        xcaddy build \
-        --with github.com/caddy-dns/cloudflare \
-        --with github.com/caddy-dns/route53 \
-        --with github.com/caddy-dns/digitalocean \
-        --with github.com/caddyserver/transform-encoder \
-        --with github.com/lucaslorentz/caddy-docker-proxy/plugin/v2
-
-    - name: Install caddy
-      shell: mv caddy /usr/bin/caddy
-
-    - name: Register caddy version
-      shell: caddy version
-      register: caddy_version
-
-    - debug:
-        var: caddy_version.stdout
-
-    - name: Create '/etc/caddy' directory
-      file:
-        path: /etc/caddy
-        state: directory
-
-    - name: Create '/etc/caddy/Caddyfile' file
-      copy:
-        dest: /etc/caddy/Caddyfile
-        content: |
-          example.com {
-              root * /var/www/static
-              file_server
-          }
-        group: sys
-        owner: root
-        mode: 0555
-
-    - name: Create '/etc/systemd/system/caddy.service' file
-      copy:
-        dest: /etc/systemd/system/caddy.service
-        content: |
-          [Unit]
-          Description=Caddy
-          Documentation=https://caddyserver.com/docs/
-          After=network.target network-online.target
-          Requires=network-online.target
-
-          [Service]
-          Type=notify
-          User=caddy
-          Group=caddy
-          ExecStart=/usr/bin/caddy docker-proxy --ingress-networks caddy --caddyfile-path /etc/caddy/Caddyfile
-          ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
-          TimeoutStopSec=5s
-          LimitNOFILE=1048576
-          PrivateTmp=true
-          ProtectSystem=full
-          AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-
-          [Install]
-          WantedBy=multi-user.target
-        group: sys
-        owner: root
-        mode: 0700
-
-    - name: Reload systemd
-      systemd:
+            [Install]
+            WantedBy=multi-user.target
+          owner: caddy
+          group: caddy
+          mode: 0755
+      - name: "Create Caddy Log Symlink"
+        shell: ln -s /var/log/caddy /var/www/_caddy/logs
+      - name: "Create Caddy Service Symlink"
+        shell: ln -s /etc/systemd/system/caddy.service /var/www/_caddy/caddy.service
+      - name: "Reload systemd"
+        systemd:
           daemon_reload: yes
 
-    - name: Enable caddy service
-      systemd:
-          name: caddy
-          enabled: yes
-
-    - name: Add caddy to docker group
-      user:
+- name: "Configure Caddy & Docker"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Add user 'caddy' to 'docker' group"
+        user:
           name: caddy
           groups: docker
           append: yes
+      - name: "Add user '{{ ansible_user }}' to 'caddy' group"
+        user:
+          name: "{{ ansible_user }}"
+          groups: caddy
+          append: yes
+      - name: "Create Docker Network 'caddy'"
+        docker_network:
+          name: caddy
+          state: present
+      - name: "Generate '/var/www/containers/whoami/docker-compose.yml'"
+        copy:
+          dest: /var/www/containers/whoami/docker-compose.yml
+          content: |
+            services:
+              whoami:
+                image: traefik/whoami
+                networks:
+                  - caddy
+                labels:
+                  caddy: whoami.example.com
+                  caddy.reverse_proxy: "{{ '{{upstreams 80}}' }}"
 
-    # initial project workspace ************************************************
+            networks:
+              caddy:
+                external: true
+          group: "{{ ansible_user }}"
+          owner: "{{ ansible_user }}"
+          mode: 0755
 
-    - name: Create Docker network 'caddy'
-      docker_network:
-        name: caddy
-        state: present
+- name: "Update/Upgrade Packages"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Upgrade apt Packages"
+        apt:
+          upgrade: yes
+          update_cache: yes
+          cache_valid_time: 86400 #One day
+      - name: "Enable Unattended Upgrades (if applicable)"
+        when: unattended_upgrades_check.stdout | int > 0
+        systemd:
+          name: unattended-upgrades
+          enabled: yes
 
-    - name: Create '/var/www/containers' directory
-      file:
-        path: /var/www/containers
-        state: directory
+- name: "Configure Login Security"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Disable Password Logins"
+        shell: "sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && service ssh restart"
+      - name: "Allow public key authentication"
+        shell: "sed -i -E 's/#?PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config && service ssh restart"
 
-    - name: Create '/var/www/containers/whoami' directory
-      file:
-        path: /var/www/containers/whoami
-        state: directory
-
-    - name: Create '/var/www/containers/whoami/docker-compose.yml' file
-      copy:
-        dest: /var/www/containers/whoami/docker-compose.yml
-        content: |
-          services:
-            whoami:
-              image: traefik/whoami
-              networks:
-                - caddy
-              labels:
-                caddy: whoami.example.com
-                caddy.reverse_proxy: "{{ '{{upstreams 80}}' }}"
-
-          networks:
-            caddy:
-              external: true
-        group: sys
-        owner: root
-        mode: 0700
-
-    # update & upgrade *********************************************************
-
-    - name: Update and upgrade apt packages
-      become: true
-      apt:
-        upgrade: yes
-        update_cache: yes
-        cache_valid_time: 86400 #One day
-
-    - name: Re-enable Unattended upgrades if applicable
-      when: unattended_upgrades_check.stdout | int > 0
-      systemd:
-        name: unattended-upgrades
-        enabled: yes
-
-    # configure user ***********************************************************
-
-    - name: Disable password logins
-      shell:
-        cmd: "sed -i -E 's/#?PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && service ssh restart"
-
-    # configure ssh ************************************************************
-
-    - name: Allow public key authentication
-      shell:
-        cmd: "sed -i -E 's/#?PubkeyAuthentication no/PubkeyAuthentication yes/' /etc/ssh/sshd_config && service ssh restart"
-
-    # configure login messaging ************************************************
-
-    - name: Update ~/.bashrc with version info
-      blockinfile:
-        path: "~/.bashrc"
-        block: |
-          cd /var/www/containers
-          clear
-          NORMAL=$'\e[0m'
-          YELLOW=$'\e[33m'
-          CYAN=$'\e[36m'
-          BLUE=$'\e[34m'
-          RED=$'\e[31m'
-          MAGENTA=$'\e[35m'
-          GREEN=$'\e[32m'
-          echo ""
-          echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
-          echo "🐲 dragon-server: ${CYAN}https://github.com/frosthaven/dragon-server"
-          echo "${GREEN}――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――${NORMAL}"
-          echo ""
-          echo "$(lsb_release -a)"
-          echo ""
-          echo "Caddy version $(caddy version)"
-          echo "$(docker --version)"
-          echo ""
-          echo "Caddy config   ${YELLOW}/etc/caddy/Caddyfile${NORMAL}"
-          echo "Caddy service  ${YELLOW}/etc/systemd/system/caddy.service${NORMAL}"
-          echo "Containers     ${YELLOW}/var/www/containers${NORMAL}"
-          echo "Static files   ${YELLOW}/var/www/static${NORMAL}"
-          echo ""
-          echo "${BLUE}$(sudo docker ps)${NORMAL}"
-          echo ""
-        state: present
-        create: true
+- name: "Configure Welcome Screen"
+  hosts: all
+  become: true
+  tasks:
+    - block:
+      - name: "Copy dragon-welcome-screen.sh to /etc/profile.d/"
+        copy:
+          src: "scripts/dragon-welcome-screen.sh"
+          dest: "/etc/profile.d/dragon-welcome-screen.sh"
+          group: "{{ ansible_user }}"
+          owner: "{{ ansible_user }}"
+          mode: 0755

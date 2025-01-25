@@ -12,26 +12,23 @@ instances based on this image, as password login is disabled by default.
 ### Caddy Server
 
 [Caddy Documentation](https://caddyserver.com/docs)
-
-1. Caddy configuration is located in `/etc/caddy/Caddyfile`.
-
-2. Caddy is installed as a systemd service (`/etc/systemd/system/caddy.service`):
+1. Caddy is installed as a systemd service (`/etc/systemd/system/caddy.service`):
    - Start: `sudo systemctl start caddy`.
    - Enable (already enabled by default): `sudo systemctl enable caddy`.
    - Disable: `sudo systemctl disable caddy`.
    - Status: `sudo systemctl status caddy`.
    - Restart: `sudo systemctl restart caddy`.
    - Stop: `sudo systemctl stop caddy`.
-3. A static file server can be hosted from `/var/www/static`.
-   - To enable, change static.example.com to your domain in `/etc/caddy/Caddyfile`
-     and restart the caddy service with `sudo systemctl restart caddy`.
+2. Caddy configuration and storage is located in `/var/www/_caddy/`. Symbolic
+   links have been added that point to the Caddy logs and systemd service file.
+3. A static file server hosts from `/var/www/static` by default.
 
 ### Docker Container Configuration
 
 [Docker Compose Documentation](https://docs.docker.com/compose/)
 
-Docker compose files can be stored anywhere, but the recommended location is
-`/var/www/containers/`.
+Docker compose files can be stored anywhere, but we use the convention of
+storing them in `/var/www/containers/`.
 
 In order to enable auto-discovery of running containers, you must add both
 the caddy network and the caddy labels to your docker-compose files:
@@ -52,4 +49,5 @@ networks:
     external: true
 ```
 
-An example is located at `/var/www/containers/whoami/docker-compose.yml`.
+An example is located at `/var/www/containers/whoami/docker-compose.yml`. You
+can learn more about `caddy-docker-proxy` labels [here](https://github.com/lucaslorentz/caddy-docker-proxy?tab=readme-ov-file#labels-to-caddyfile-conversion).
